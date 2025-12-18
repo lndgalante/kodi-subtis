@@ -12,14 +12,15 @@
     <language>es</language>
   </extension>
   <extension point="xbmc.addon.metadata">
+    <summary lang="en">Subtitles service for Subtis</summary>
     <summary lang="es">Servicio de subtítulos de subtis</summary>
+    <description lang="en">Downloads subtitles from the Subtis service</description>
     <description lang="es">Descarga subtítulos desde el servicio de subtis</description>
     <platform>all</platform>
     <license>GPL-2.0-or-later</license>
-    <forum></forum>
-    <website></website>
-    <source></source>
-    <news>v0.0.1 - Initial Release</news>
+    <website>https://subtis.io/</website>
+    <source>https://github.com/lndgalante/kodi-subtis</source>
+    <news>v0.8.7 - Initial Release</news>
     <assets>
       <icon>resources/icon.png</icon>
     </assets>
