@@ -11,11 +11,12 @@ Actions:
 
 import json
 import os
+import struct
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, TypedDict
+from typing import Any, Dict, Optional, Tuple, TypedDict
 
 import xbmc
 import xbmcaddon
@@ -52,6 +53,7 @@ class TitleData(TypedDict, total=False):
 class MediaItem(TypedDict):
     file_name: str
     file_size: int
+    video_hash: Optional[str]
 
 
 def log(message: str) -> None:
@@ -62,7 +64,7 @@ def notify(message: str, level: int = xbmcgui.NOTIFICATION_INFO) -> None:
     xbmcgui.Dialog().notification("Subtis", message, level, NOTIFICATION_DURATION_MS)
 
 
-def fetch_json(url: str) -> tuple[dict[str, Any] | None, int]:
+def fetch_json(url: str) -> Tuple[Optional[Dict[str, Any]], int]:
     """Fetches JSON from a URL and returns the parsed data with status code."""
     try:
         req = urllib.request.Request(url)
@@ -87,9 +89,9 @@ def fetch_json(url: str) -> tuple[dict[str, Any] | None, int]:
 
 
 def build_subtitle_result(
-    response_data: dict[str, Any],
+    response_data: Dict[str, Any],
     is_synced: bool = True,
-) -> tuple[str, xbmcgui.ListItem] | None:
+) -> Optional[Tuple[str, xbmcgui.ListItem]]:
     """Builds a Kodi ListItem from API response data."""
     subtitle_data = response_data.get("subtitle", {})
     title_data = response_data.get("title", {})
@@ -106,7 +108,6 @@ def build_subtitle_result(
     display_label = f"{title_name} ({year})" if year else title_name
 
     listitem = xbmcgui.ListItem(label=LANGUAGE_CODE, label2=display_label)
-    # Icon "5" represents the subtitle sync/quality rating (1-5 scale in Kodi's subtitle API)
     listitem.setArt({"icon": "5", "thumb": LANGUAGE_CODE})
     listitem.setProperty("sync", "true" if is_synced else "false")
     listitem.setProperty("hearing_imp", "false")
@@ -120,23 +121,90 @@ def build_subtitle_result(
     return url, listitem
 
 
-def fetch_primary_subtitle(
-    file_name: str,
-    file_size: int,
-) -> tuple[str, xbmcgui.ListItem] | None:
-    """Fetches subtitle by exact file name and size match."""
-    encoded_filename = urllib.parse.quote(file_name)
-    search_url = f"{SUBTIS_API_BASE}/subtitle/file/name/{file_size}/{encoded_filename}"
+def calculate_video_hash(file_path: str) -> Optional[str]:
+    """Calculates OpenSubtitles video hash."""
+    try:
+        longlong_format = "<q"
+        bytesize = struct.calcsize(longlong_format)
+
+        if xbmcvfs.exists(file_path):
+            stat = xbmcvfs.Stat(file_path)
+            file_size = stat.st_size()
+        else:
+            return None
+
+        if file_size < 65536 * 2:
+            return None
+
+        if os.path.exists(file_path):
+            f = open(file_path, "rb")
+        else:
+            f = xbmcvfs.File(file_path, "rb")
+
+        try:
+            hash_val = file_size
+
+            for _ in range(65536 // bytesize):
+                buffer = f.read(bytesize)
+                (l_value,) = struct.unpack(longlong_format, buffer)
+                hash_val += l_value
+                hash_val &= 0xFFFFFFFFFFFFFFFF
+
+            f.seek(max(0, file_size - 65536), 0)
+            for _ in range(65536 // bytesize):
+                buffer = f.read(bytesize)
+                (l_value,) = struct.unpack(longlong_format, buffer)
+                hash_val += l_value
+                hash_val &= 0xFFFFFFFFFFFFFFFF
+
+            return f"{hash_val:016x}"
+
+        finally:
+            f.close()
+
+    except Exception as exc:
+        log(f"Error calculating hash: {exc}")
+        return None
+
+
+def fetch_by_hash(video_hash: str) -> Optional[Tuple[str, xbmcgui.ListItem]]:
+    """Fetches subtitle by video hash."""
+    search_url = f"{SUBTIS_API_BASE}/subtitle/find/file/hash/{video_hash}"
     response_data, status_code = fetch_json(search_url)
 
     if not response_data or status_code != 200:
-        log(f"Primary search: no match (status: {status_code})")
+        log(f"Hash search: no match (status: {status_code})")
         return None
 
     return build_subtitle_result(response_data, is_synced=True)
 
 
-def fetch_alternative_subtitle(file_name: str) -> tuple[str, xbmcgui.ListItem] | None:
+def fetch_by_bytes(file_size: int) -> Optional[Tuple[str, xbmcgui.ListItem]]:
+    """Fetches subtitle by file size (bytes)."""
+    search_url = f"{SUBTIS_API_BASE}/subtitle/find/file/bytes/{file_size}"
+    response_data, status_code = fetch_json(search_url)
+
+    if not response_data or status_code != 200:
+        log(f"Bytes search: no match (status: {status_code})")
+        return None
+
+    return build_subtitle_result(response_data, is_synced=True)
+
+
+def fetch_by_filename(file_name: str) -> Optional[Tuple[str, xbmcgui.ListItem]]:
+    """Fetches subtitle by exact file name."""
+    encoded_filename = urllib.parse.quote(file_name)
+    search_url = f"{SUBTIS_API_BASE}/subtitle/find/file/name/{encoded_filename}"
+    response_data, status_code = fetch_json(search_url)
+
+    if not response_data or status_code != 200:
+        log(f"Filename search: no match (status: {status_code})")
+        return None
+
+    return build_subtitle_result(response_data, is_synced=True)
+
+
+def fetch_alternative_subtitle(file_name: str) -> Optional[Tuple[str, xbmcgui.ListItem]]:
     """Fetches alternative subtitle by file name only (fuzzy match)."""
     encoded_filename = urllib.parse.quote(file_name)
     search_url = f"{SUBTIS_API_BASE}/subtitle/file/alternative/{encoded_filename}"
@@ -149,26 +217,51 @@ def fetch_alternative_subtitle(file_name: str) -> tuple[str, xbmcgui.ListItem] |
     return build_subtitle_result(response_data, is_synced=False)
 
 
-def search_subtitles(item: MediaItem) -> tuple[str, xbmcgui.ListItem] | None:
-    """Searches for subtitles, trying primary then alternative endpoints."""
+def search_subtitles(item: MediaItem) -> Optional[Tuple[str, xbmcgui.ListItem]]:
+    """
+    Searches for subtitles using a cascade strategy:
+    1. Hash
+    2. Bytes (Size)
+    3. Filename (Exact)
+    4. Alternative (Fuzzy)
+    """
     file_name = item.get("file_name", "")
     file_size = item.get("file_size", 0)
+    video_hash = item.get("video_hash")
 
     if not file_name:
         log("ERROR: File name missing")
         return None
 
-    # Try primary search (exact match by size + name)
-    if file_size:
-        result = fetch_primary_subtitle(file_name, file_size)
+    if video_hash:
+        log(f"Trying Hash search for: {video_hash}")
+        result = fetch_by_hash(video_hash)
         if result:
+            log("Subtitle found via Hash search")
             return result
 
-    # Fallback to alternative search (fuzzy match by name only)
-    return fetch_alternative_subtitle(file_name)
+    if file_size:
+        log(f"Trying Bytes search for size: {file_size}")
+        result = fetch_by_bytes(file_size)
+        if result:
+            log("Subtitle found via Bytes search")
+            return result
+
+    log(f"Trying Filename search for: {file_name}")
+    result = fetch_by_filename(file_name)
+    if result:
+        log("Subtitle found via Filename search")
+        return result
+
+    log(f"Trying Alternative search for: {file_name}")
+    result = fetch_alternative_subtitle(file_name)
+    if result:
+        log("Subtitle found via Alternative search")
+        return result
+    return None
 
 
-def download_subtitle(subtitle_link: str, subtitle_file_name: str) -> str | None:
+def download_subtitle(subtitle_link: str, subtitle_file_name: str) -> Optional[str]:
     """Downloads a subtitle file and saves it to the temp directory."""
     if not xbmcvfs.exists(__temp__):
         xbmcvfs.mkdirs(__temp__)
@@ -203,7 +296,7 @@ def download_subtitle(subtitle_link: str, subtitle_file_name: str) -> str | None
         return None
 
 
-def get_params() -> dict[str, str]:
+def get_params() -> Dict[str, str]:
     return dict(urllib.parse.parse_qsl(sys.argv[2].lstrip("?")))
 
 
@@ -226,14 +319,20 @@ def handle_search(handle: int, player: xbmc.Player) -> None:
     file_name = os.path.basename(playing_file)
     file_size = 0
 
+    video_hash = None
     try:
         if xbmcvfs.exists(playing_file):
             stat = xbmcvfs.Stat(playing_file)
             file_size = stat.st_size()
+            video_hash = calculate_video_hash(playing_file)
     except Exception as exc:
-        log(f"Could not get file size: {exc}")
+        log(f"Could not get file details: {exc}")
 
-    item: MediaItem = {"file_name": file_name, "file_size": file_size}
+    item: MediaItem = {
+        "file_name": file_name,
+        "file_size": file_size,
+        "video_hash": video_hash,
+    }
     result = search_subtitles(item)
 
     if result is None:
@@ -249,7 +348,7 @@ def handle_search(handle: int, player: xbmc.Player) -> None:
         )
 
 
-def handle_download(handle: int, params: dict[str, str]) -> None:
+def handle_download(handle: int, params: Dict[str, str]) -> None:
     """Handles the download action: downloads and registers a subtitle file."""
     subtitle_link = params.get("link")
     subtitle_file_name = params.get("filename")
