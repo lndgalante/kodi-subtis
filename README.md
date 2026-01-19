@@ -9,64 +9,55 @@ Addon de servicio de subtítulos para Kodi que usa la API de [Subtis](https://su
 
 ## Instalación
 
-1. Descarga el ZIP desde `versions/` (ej. `service.subtitles.subtis-X.Y.Z.zip`)
-2. En Kodi: **Add-ons** → **Instalar desde archivo ZIP** → selecciona el ZIP
-3. Espera la notificación de instalación exitosa
+1. Descarga el ZIP del addon (release o paquete generado localmente).
+2. En Kodi: **Add-ons** → **Instalar desde archivo ZIP** → selecciona el ZIP.
+3. Espera la notificación de instalación exitosa.
+
+### Empaquetado manual (si clonas el repo)
+
+1. Crea una carpeta `service.subtitles.subtis`.
+2. Copia dentro `addon.xml`, `service.py`, `README.md` y `resources/`.
+3. Comprime la carpeta en un ZIP manteniendo la estructura de raíz.
 
 ## Uso
 
-1. Reproduce una película en Kodi
-2. Abre el menú de subtítulos (tecla `T` o desde el OSD)
-3. Selecciona **Subtis** como proveedor
-4. El subtítulo se descarga y aplica automáticamente
+1. Reproduce una película en Kodi.
+2. Abre el menú de subtítulos (tecla `T` o desde el OSD).
+3. Selecciona **Subtis** como proveedor.
+4. El subtítulo se descarga y aplica automáticamente.
 
-**Nota**: Series/TV shows aún no están soportados.
+**Nota:** series/TV shows aún no están soportados.
 
-## Cómo Funciona
+## Cómo funciona
 
-### Flujo de Búsqueda
+### Estrategia de búsqueda
 
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Kodi Player    │────▶│  Subtis Addon   │────▶│  subt.is API    │
-│  (película)     │     │  (search)       │     │                 │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                                │                       │
-                                │  1. Primary search    │
-                                │  (size + filename)    │
-                                │◀──────────────────────│
-                                │                       │
-                        ┌───────▼───────┐               │
-                        │  Found?       │               │
-                        └───────┬───────┘               │
-                           No   │   Yes                 │
-                    ┌───────────┴──────────┐            │
-                    │                      │            │
-                    ▼                      ▼            │
-            2. Alternative         Download & apply     │
-            (filename only)        (sync: true)         │
-                    │                                   │
-                    │◀──────────────────────────────────│
-                    ▼
-            Download & apply
-            (sync: false)
-```
+La búsqueda se hace en cascada hasta encontrar una coincidencia:
 
-### Acciones del Plugin
+1. **Hash del video (OpenSubtitles)**
+2. **Tamaño en bytes**
+3. **Nombre exacto del archivo**
+4. **Búsqueda alternativa (fuzzy)**
 
-| Acción     | Descripción                                      |
-|------------|--------------------------------------------------|
-| `search`   | Busca subtítulos usando nombre y tamaño del archivo |
-| `download` | Descarga el subtítulo desde `subtitle_link`      |
+Si la coincidencia viene de la búsqueda alternativa, Kodi marca el subtítulo como **no sincronizado**.
+
+### Acciones del addon
+
+| Acción     | Descripción                                               |
+|------------|-----------------------------------------------------------|
+| `search`   | Busca subtítulos para el archivo en reproducción           |
+| `download` | Descarga el subtítulo desde `subtitle_link`               |
 
 ### API Endpoints
 
+Base URL: `https://api.subt.is/v1`
+
 | Endpoint | Uso |
 |----------|-----|
-| `GET /v1/subtitle/file/name/{size}/{filename}` | Primario: coincidencia exacta por tamaño + nombre |
-| `GET /v1/subtitle/file/alternative/{filename}` | Alternativo: coincidencia difusa solo por nombre |
-
-El addon intenta primero el endpoint primario. Si no encuentra coincidencia, usa el endpoint alternativo. Los subtítulos alternativos se marcan como "no sincronizados" en Kodi ya que pueden no coincidir perfectamente con el archivo de video.
+| `GET /subtitle/find/file/hash/{hash}` | Coincidencia por hash del video |
+| `GET /subtitle/find/file/bytes/{bytes}` | Coincidencia por tamaño en bytes |
+| `GET /subtitle/find/file/name/{filename}` | Coincidencia exacta por nombre |
+| `GET /subtitle/file/alternative/{filename}` | Coincidencia difusa por nombre |
 
 **Respuesta exitosa (200):**
 ```json
@@ -89,10 +80,10 @@ Los subtítulos descargados se guardan temporalmente en:
 {kodi_profile}/addon_data/service.subtitles.subtis/temp/
 ```
 
-## Estructura del Paquete
+## Estructura del repositorio
 
 ```
-service.subtitles.subtis/
+.
 ├── addon.xml          # Manifest del addon
 ├── service.py         # Lógica principal
 ├── README.md          # Documentación
@@ -102,20 +93,15 @@ service.subtitles.subtis/
 
 ## Desarrollo
 
-### Construir el ZIP
-
-```bash
-cd packages/kodi
-python3 build.py
-```
-
-El paquete se genera en `versions/service.subtitles.subtis-<versión>.zip`.
-
 ### Logs
 
-Los logs del addon usan el prefijo `### SUBTIS ###` y se pueden ver en:
-- **Sistema** → **Registro** (habilitar debug)
-- Archivo: `~/.kodi/temp/kodi.log`
+Los logs del addon usan el prefijo `### SUBTIS ###`. Puedes verlos en:
+
+- **Kodi** → **Sistema** → **Registro** (habilitar debug).
+- Archivo de log (según SO):
+  - Windows: `%APPDATA%\Kodi\kodi.log`
+  - Linux: `~/.kodi/temp/kodi.log`
+  - macOS: `~/Library/Logs/kodi.log`
 
 Ejemplo de log:
 ```
@@ -123,7 +109,7 @@ Ejemplo de log:
 ### SUBTIS ### ERROR: No subtitles found or API error (status: 404)
 ```
 
-### Configuración Requerida
+### Publicación
 
 Antes de publicar, actualiza la versión en `addon.xml`:
 ```xml
@@ -139,8 +125,8 @@ Antes de publicar, actualiza la versión en `addon.xml`:
 | "Soporte para series proximamente" | Las series aún no están soportadas |
 | Subtítulo no aparece | Revisa los logs para ver errores de red o API |
 
-## Limitaciones Actuales
+## Limitaciones actuales
 
-- Solo películas (no series/episodios)
-- Solo subtítulos en español
-- Subtítulos alternativos pueden no estar perfectamente sincronizados
+- Solo películas (no series/episodios).
+- Solo subtítulos en español.
+- Subtítulos alternativos pueden no estar perfectamente sincronizados.
