@@ -6,11 +6,9 @@
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
   </requires>
-  <extension point="xbmc.subtitle.module"
-        library="service.py">
-      <language>en_GB</language>
-      <language>es_ES</language>
-  </extension>
+  <extension
+    point="xbmc.subtitle.module"
+    library="service.py" />
   <extension point="xbmc.addon.metadata">
     <summary lang="en_GB">Subtitles service for Subtis</summary>
     <summary lang="es_ES">Servicio de subtítulos de Subtis</summary>
